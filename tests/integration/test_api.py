@@ -63,6 +63,21 @@ class TestUrlApiIntegration:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_redirect_preview_returns_json(self, client):
+        create_response = await client.post(
+            "/api/v1/urls",
+            json={"long_url": "https://example.com/preview-test", "custom_alias": "preview-link"},
+        )
+        assert create_response.status_code == 201
+
+        response = await client.get("/preview-link?preview=true", follow_redirects=False)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["alias"] == "preview-link"
+        assert body["redirect_url"] == "https://example.com/preview-test"
+        assert body["status_code"] == 307
+
+    @pytest.mark.asyncio
     async def test_invalid_url_returns_422(self, client):
         response = await client.post(
             "/api/v1/urls",

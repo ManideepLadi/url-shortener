@@ -35,5 +35,11 @@ class CreateUrlResponse(UrlMetadataResponse):
     pass
 
 
+class RedirectPreviewResponse(BaseModel):
+    alias: str
+    redirect_url: str
+    status_code: int = 307
+
+
 class ErrorResponse(BaseModel):
     detail: str

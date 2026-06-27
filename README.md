@@ -121,6 +121,13 @@ GET /{alias}
 
 Returns `307 Temporary Redirect` to the original URL.
 
+**Testing redirects:** Swagger UI cannot follow redirects to external sites (browser CORS blocks it). Use one of:
+
+- Browser address bar: `https://your-app.ondigitalocean.app/{alias}`
+- curl: `curl -I https://your-app.ondigitalocean.app/{alias}`
+- Swagger preview mode: `GET /{alias}?preview=true` → JSON with `redirect_url`
+- Metadata API: `GET /api/v1/urls/{alias}` → includes `long_url`
+
 ### Health
 
 ```http

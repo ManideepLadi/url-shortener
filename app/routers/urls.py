@@ -1,13 +1,18 @@
 import logging
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
 from app.dependencies import get_url_service
-from app.schemas.url import CreateUrlRequest, CreateUrlResponse, UrlMetadataResponse
+from app.schemas.url import (
+    CreateUrlRequest,
+    CreateUrlResponse,
+    RedirectPreviewResponse,
+    UrlMetadataResponse,
+)
 from app.services.url_service import UrlService
 
 logger = logging.getLogger(__name__)
@@ -46,14 +51,43 @@ redirect_router = APIRouter(tags=["redirect"])
 @redirect_router.get(
     "/{alias}",
     summary="Redirect to the original URL",
-    response_class=RedirectResponse,
-    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    description=(
+        "Returns **307 Temporary Redirect** for browsers, curl, and direct links. "
+        "Swagger UI cannot follow redirects to external sites (browser CORS) — "
+        "use `?preview=true` to receive the target URL as JSON instead."
+    ),
+    response_model=None,
+    responses={
+        307: {
+            "description": "Temporary redirect to the long URL",
+            "headers": {
+                "Location": {
+                    "description": "The original URL",
+                    "schema": {"type": "string"},
+                }
+            },
+        },
+        200: {
+            "description": "Preview mode (`?preview=true`) — JSON instead of redirect",
+            "model": RedirectPreviewResponse,
+        },
+    },
 )
 async def redirect_to_long_url(
     alias: str,
+    preview: bool = Query(
+        False,
+        description="Return JSON with redirect_url instead of HTTP 307 (for Swagger/testing)",
+    ),
     service: UrlService = Depends(get_url_service),
-) -> RedirectResponse:
+) -> RedirectResponse | RedirectPreviewResponse:
     long_url = await service.resolve_redirect(alias)
+    if preview:
+        return RedirectPreviewResponse(
+            alias=alias,
+            redirect_url=long_url,
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        )
     return RedirectResponse(url=long_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
