@@ -8,7 +8,12 @@ logger = logging.getLogger(__name__)
 
 
 class InMemoryUrlCache:
-    """In-process cache for local development without Redis."""
+    """
+    In-process cache for redirect targets and buffered hit counters.
+
+    URL mappings are stored in PostgreSQL. This cache reduces DB reads on
+    hot redirects and batches access-count writes until metadata is read.
+    """
 
     def __init__(self) -> None:
         self._redirects: dict[str, tuple[str, float]] = {}
@@ -50,6 +55,3 @@ class InMemoryUrlCache:
     async def reset_pending_hits(self, alias: str) -> int:
         async with self._lock:
             return self._hits.pop(alias, 0)
-
-    async def ping(self) -> bool:
-        return True

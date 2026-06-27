@@ -73,6 +73,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://db-dev:password@localhost:5432/db-dev"
     database_ssl_required: bool = True
+    database_ssl_verify_ca: bool = True
+    database_ca_cert: str | None = None
 
     base_url: str = "http://localhost:8000"
     redirect_cache_ttl_seconds: int = 3600

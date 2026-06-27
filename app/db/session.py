@@ -1,42 +1,54 @@
 import asyncio
 import logging
-import ssl
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import masked_database_url, normalize_database_url, settings
+from app.db.ssl_context import create_database_ssl_context
 
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = normalize_database_url(settings.database_url)
 
+_engine: AsyncEngine | None = None
+_SessionLocal: async_sessionmaker[AsyncSession] | None = None
+
 
 def _build_connect_args() -> dict:
     if not settings.database_ssl_required:
         return {}
-    ssl_context = ssl.create_default_context()
-    return {"ssl": ssl_context}
+    return {"ssl": create_database_ssl_context()}
 
 
-engine = create_async_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    echo=settings.app_env == "development",
-    connect_args=_build_connect_args(),
-)
+def get_engine() -> AsyncEngine:
+    global _engine, _SessionLocal
+    if _engine is None:
+        _engine = create_async_engine(
+            DATABASE_URL,
+            pool_pre_ping=True,
+            echo=settings.app_env == "development",
+            connect_args=_build_connect_args(),
+        )
+        _SessionLocal = async_sessionmaker(
+            bind=_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
+        )
+    return _engine
 
-SessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-    autocommit=False,
-)
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    get_engine()
+    assert _SessionLocal is not None
+    return _SessionLocal
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    session = SessionLocal()
+    session_factory = get_session_factory()
+    session = session_factory()
     try:
         yield session
     except Exception:
@@ -49,6 +61,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     from app.models.url import Base
 
+    engine = get_engine()
     last_error: Exception | None = None
     max_retries = settings.db_init_max_retries
     retry_delay = settings.db_init_retry_delay_seconds
@@ -76,10 +89,14 @@ async def init_db() -> None:
         max_retries,
     )
     raise RuntimeError(
-        "PostgreSQL is unavailable. Check DATABASE_URL and network access."
+        "PostgreSQL is unavailable. Check DATABASE_URL, DATABASE_CA_CERT, and network access."
     ) from last_error
 
 
 async def close_db() -> None:
-    await engine.dispose()
-    logger.info("Database connections closed")
+    global _engine, _SessionLocal
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+        _SessionLocal = None
+        logger.info("Database connections closed")
