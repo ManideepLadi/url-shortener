@@ -84,9 +84,13 @@ async def init_db() -> None:
                 await asyncio.sleep(retry_delay)
 
     logger.error(
-        "Could not connect to PostgreSQL at %s after %s attempts.",
+        "Could not connect to PostgreSQL at %s after %s attempts. "
+        "ssl_required=%s ssl_verify_ca=%s ca_cert_configured=%s",
         masked_database_url(DATABASE_URL),
         max_retries,
+        settings.database_ssl_required,
+        settings.database_ssl_verify_ca,
+        bool(settings.database_ca_cert),
     )
     raise RuntimeError(
         "PostgreSQL is unavailable. Check DATABASE_URL, DATABASE_CA_CERT, and network access."

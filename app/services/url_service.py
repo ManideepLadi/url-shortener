@@ -5,20 +5,22 @@ from app.db.in_memory_cache import InMemoryUrlCache
 from app.models.url import UrlMapping
 from app.repositories.url_repository import UrlRepository
 from app.schemas.url import CreateUrlRequest, CreateUrlResponse, UrlMetadataResponse
-from app.utils.alias import RESERVED_ALIASES, generate_random_alias
-from app.utils.exceptions import (
-    AliasAlreadyExistsError,
-    AliasGenerationError,
-    UrlMappingNotFoundError,
-)
+from app.strategies.base import AliasGenerationStrategy
+from app.utils.exceptions import UrlMappingNotFoundError
 
 logger = logging.getLogger(__name__)
 
 
 class UrlService:
-    def __init__(self, repository: UrlRepository, cache: InMemoryUrlCache) -> None:
+    def __init__(
+        self,
+        repository: UrlRepository,
+        cache: InMemoryUrlCache,
+        alias_strategy: AliasGenerationStrategy,
+    ) -> None:
         self._repository = repository
         self._cache = cache
+        self._alias_strategy = alias_strategy
         self._base_url = settings.base_url.rstrip("/")
 
     def _build_short_url(self, alias: str) -> str:
@@ -45,29 +47,14 @@ class UrlService:
             logger.info("Created custom alias=%s", mapping.alias)
             return CreateUrlResponse(**self._to_metadata(mapping, mapping.access_count).model_dump())
 
-        mapping = await self._create_with_generated_alias(long_url)
+        mapping = await self._alias_strategy.create_auto_alias(self._repository, long_url)
         await self._cache.set_long_url(mapping.alias, mapping.long_url)
-        logger.info("Created auto alias=%s", mapping.alias)
+        logger.info(
+            "Created auto alias=%s strategy=%s",
+            mapping.alias,
+            self._alias_strategy.name,
+        )
         return CreateUrlResponse(**self._to_metadata(mapping, mapping.access_count).model_dump())
-
-    async def _create_with_generated_alias(self, long_url: str) -> UrlMapping:
-        last_error: AliasAlreadyExistsError | None = None
-
-        for attempt in range(1, settings.auto_alias_max_retries + 1):
-            alias = generate_random_alias(settings.auto_alias_length)
-            if alias.lower() in RESERVED_ALIASES:
-                continue
-            try:
-                return await self._repository.create(alias=alias, long_url=long_url)
-            except AliasAlreadyExistsError as exc:
-                last_error = exc
-                logger.warning(
-                    "Auto alias collision attempt=%s alias=%s",
-                    attempt,
-                    alias,
-                )
-
-        raise AliasGenerationError() from last_error
 
     async def get_metadata(self, alias: str) -> UrlMetadataResponse:
         mapping = await self._repository.get_by_alias(alias)

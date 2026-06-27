@@ -27,6 +27,31 @@ class UrlRepository:
         await self._session.refresh(mapping)
         return mapping
 
+    async def create_and_flush(self, alias: str, long_url: str) -> UrlMapping:
+        """Insert a row and flush so the autoincrement ID is available."""
+        mapping = UrlMapping(alias=alias, long_url=long_url)
+        self._session.add(mapping)
+        await self._session.flush()
+        await self._session.refresh(mapping)
+        return mapping
+
+    async def finalize_alias(self, mapping: UrlMapping, alias: str) -> UrlMapping:
+        """Replace a temporary alias with the final generated alias."""
+        mapping.alias = alias
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            logger.warning("Alias collision on finalize: alias=%s", alias)
+            raise AliasAlreadyExistsError(alias) from exc
+
+        await self._session.refresh(mapping)
+        return mapping
+
+    async def discard_pending(self, mapping: UrlMapping) -> None:
+        """Roll back a flushed-but-not-committed row after failed alias assignment."""
+        await self._session.rollback()
+
     async def get_by_alias(self, alias: str) -> UrlMapping | None:
         result = await self._session.execute(
             select(UrlMapping).where(UrlMapping.alias == alias)

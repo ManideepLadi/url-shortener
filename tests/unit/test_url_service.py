@@ -6,6 +6,7 @@ import pytest
 from app.models.url import UrlMapping
 from app.schemas.url import CreateUrlRequest
 from app.services.url_service import UrlService
+from app.strategies.random_alias_strategy import RandomAliasStrategy
 from app.utils.exceptions import (
     AliasAlreadyExistsError,
     AliasGenerationError,
@@ -35,7 +36,11 @@ def cache() -> AsyncMock:
 
 @pytest.fixture
 def service(repository: AsyncMock, cache: AsyncMock) -> UrlService:
-    return UrlService(repository=repository, cache=cache)
+    return UrlService(
+        repository=repository,
+        cache=cache,
+        alias_strategy=RandomAliasStrategy(length=8, max_retries=5),
+    )
 
 
 class TestCreateShortUrl:

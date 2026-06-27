@@ -60,6 +60,31 @@ def normalize_database_url(url: str) -> str:
     )
 
 
+def normalize_ca_cert(value: str | None) -> str | None:
+    """
+    Normalize a PEM CA certificate from env vars or App Platform injection.
+
+    Handles empty values, surrounding quotes, and literal \\n sequences common
+    when PEM is stored as a single-line environment variable.
+    """
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+
+    if normalized.startswith("${") and normalized.endswith("}"):
+        # Unexpanded App Platform placeholder, e.g. ${db-dev.CA_CERT}
+        return None
+
+    normalized = normalized.strip('"').strip("'")
+    if "\\n" in normalized:
+        normalized = normalized.replace("\\n", "\n")
+
+    return normalized
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -78,6 +103,7 @@ class Settings(BaseSettings):
 
     base_url: str = "http://localhost:8000"
     redirect_cache_ttl_seconds: int = 3600
+    auto_alias_strategy: str = "random"
     auto_alias_length: int = 8
     auto_alias_max_retries: int = 5
 
@@ -88,6 +114,19 @@ class Settings(BaseSettings):
     @classmethod
     def validate_database_url(cls, value: str) -> str:
         return normalize_database_url(value)
+
+    @field_validator("database_ca_cert")
+    @classmethod
+    def validate_database_ca_cert(cls, value: str | None) -> str | None:
+        return normalize_ca_cert(value)
+
+    @field_validator("auto_alias_strategy")
+    @classmethod
+    def validate_auto_alias_strategy(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"random", "base62"}:
+            raise ValueError("AUTO_ALIAS_STRATEGY must be 'random' or 'base62'")
+        return normalized
 
 
 settings = Settings()

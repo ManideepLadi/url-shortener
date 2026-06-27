@@ -205,11 +205,27 @@ The database enforces uniqueness via a unique index on `alias`. Concurrent reque
 
 When `custom_alias` is omitted:
 
-1. Generate a cryptographically random alias (`secrets`, length = `AUTO_ALIAS_LENGTH`, default 8).
-2. Skip if the alias matches a reserved word (case-insensitive).
+1. The configured **alias strategy** generates the alias (see below).
+2. Skip if the alias matches a reserved word (random strategy only; base62 handles via offset).
 3. Attempt insert into PostgreSQL.
-4. On collision → retry up to `AUTO_ALIAS_MAX_RETRIES` times (default 5).
+4. On collision → retry up to `AUTO_ALIAS_MAX_RETRIES` times (random strategy only).
 5. If all retries fail → `503 Service Unavailable`.
+
+#### Alias generation strategies
+
+Configured via `AUTO_ALIAS_STRATEGY` (`random` or `base62`).
+
+| Strategy | Env value | How the alias is produced |
+|---|---|---|
+| **Random** (default) | `random` | `secrets`-based random string, length = `AUTO_ALIAS_LENGTH` (default 8) |
+| **Base62** | `base62` | PostgreSQL autoincrement `id` encoded as Base62, padded to `AUTO_ALIAS_LENGTH` |
+
+Base62 example: record `id=5` with `AUTO_ALIAS_LENGTH=3` → alias `005`.
+
+```env
+AUTO_ALIAS_STRATEGY=base62
+AUTO_ALIAS_LENGTH=3
+```
 
 #### Step 4 — Cache and response
 
@@ -299,7 +315,8 @@ See `.env.example` for all settings.
 | `DATABASE_SSL_VERIFY_CA` | `false` = encrypt only (local dev); `true` = verify-full (production) |
 | `DATABASE_CA_CERT` | PEM content for verify-full; use `${defaultdb.CA_CERT}` on App Platform |
 | `BASE_URL` | Public base URL for generated short links |
-| `AUTO_ALIAS_LENGTH` | Length of auto-generated aliases (default 8) |
+| `AUTO_ALIAS_STRATEGY` | Alias generation strategy: `random` or `base62` (default `random`) |
+| `AUTO_ALIAS_LENGTH` | Random alias length, or Base62 minimum length (default 8) |
 | `AUTO_ALIAS_MAX_RETRIES` | Max collision retries for auto aliases (default 5) |
 | `REDIRECT_CACHE_TTL_SECONDS` | In-memory cache TTL (default 3600) |
 
