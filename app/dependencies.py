@@ -1,45 +1,38 @@
-import logging
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.in_memory_cache import InMemoryUrlCache
-from app.repositories.in_memory_url_repository import InMemoryUrlRepository
+from app.db.session import get_db_session
+from app.repositories.url_repository import UrlRepository
 from app.services.url_service import UrlService
 
 # ---------------------------------------------------------------------------
-# PostgreSQL + Redis wiring (disabled for local dev — uncomment when ready)
+# Redis wiring (disabled — uncomment when ready)
 # ---------------------------------------------------------------------------
-# from fastapi import Depends
 # from redis.asyncio import Redis
-# from sqlalchemy.ext.asyncio import AsyncSession
-#
 # from app.db.redis_client import UrlCache
-# from app.db.session import get_db_session, get_redis_client
-# from app.repositories.url_repository import UrlRepository
-#
+# from app.db.session import get_redis_client
 #
 # async def get_url_cache(
 #     redis: Redis = Depends(get_redis_client),
 # ) -> UrlCache:
 #     return UrlCache(redis)
-#
-#
-# async def get_url_repository(
-#     session: AsyncSession = Depends(get_db_session),
-# ) -> UrlRepository:
-#     return UrlRepository(session)
 
-logger = logging.getLogger(__name__)
-
-_repository = InMemoryUrlRepository()
 _cache = InMemoryUrlCache()
-
-
-async def get_url_repository() -> InMemoryUrlRepository:
-    return _repository
 
 
 async def get_url_cache() -> InMemoryUrlCache:
     return _cache
 
 
-async def get_url_service() -> UrlService:
-    return UrlService(repository=_repository, cache=_cache)
+async def get_url_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> UrlRepository:
+    return UrlRepository(session)
+
+
+async def get_url_service(
+    repository: UrlRepository = Depends(get_url_repository),
+    cache: InMemoryUrlCache = Depends(get_url_cache),
+) -> UrlService:
+    return UrlService(repository=repository, cache=cache)

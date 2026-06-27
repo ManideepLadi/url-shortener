@@ -2,20 +2,13 @@ import logging
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import get_db_session
 from app.dependencies import get_url_service
 from app.schemas.url import CreateUrlRequest, CreateUrlResponse, UrlMetadataResponse
 from app.services.url_service import UrlService
-
-# ---------------------------------------------------------------------------
-# PostgreSQL + Redis health checks (disabled — uncomment when ready)
-# ---------------------------------------------------------------------------
-# from redis.asyncio import Redis
-# from sqlalchemy import text
-# from sqlalchemy.ext.asyncio import AsyncSession
-#
-# from app.db.redis_client import UrlCache
-# from app.db.session import get_db_session, get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -68,38 +61,20 @@ health_router = APIRouter(tags=["health"])
 
 
 @health_router.get("/health", summary="Health check")
-async def health_check() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "storage": "in-memory",
-        # "database": "disabled",
-        # "redis": "disabled",
-    }
+async def health_check(
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, str]:
+    db_status = "ok"
 
-# ---------------------------------------------------------------------------
-# PostgreSQL + Redis health checks (disabled — uncomment when ready)
-# ---------------------------------------------------------------------------
-# @health_router.get("/health", summary="Health check")
-# async def health_check(
-#     session: AsyncSession = Depends(get_db_session),
-#     redis: Redis = Depends(get_redis_client),
-# ) -> dict[str, str]:
-#     db_status = "ok"
-#     redis_status = "ok"
-#
-#     try:
-#         await session.execute(text("SELECT 1"))
-#     except Exception:
-#         logger.exception("Database health check failed")
-#         db_status = "error"
-#
-#     cache = UrlCache(redis)
-#     if not await cache.ping():
-#         redis_status = "error"
-#
-#     overall = "ok" if db_status == "ok" and redis_status == "ok" else "degraded"
-#     return {
-#         "status": overall,
-#         "database": db_status,
-#         "redis": redis_status,
-#     }
+    try:
+        await session.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("Database health check failed")
+        db_status = "error"
+
+    overall = "ok" if db_status == "ok" else "degraded"
+    return {
+        "status": overall,
+        "database": db_status,
+        "cache": "in-memory",
+    }

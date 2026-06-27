@@ -76,4 +76,5 @@ class TestUrlApiIntegration:
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "ok"
-        assert body["storage"] == "in-memory"
+        assert body["database"] == "ok"
+        assert body["cache"] == "in-memory"

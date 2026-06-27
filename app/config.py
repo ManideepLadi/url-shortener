@@ -12,8 +12,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/urlshortener"
-    redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "postgresql+asyncpg://db-dev:password@localhost:5432/db-dev"
+    database_ssl_required: bool = True
+
+    # Redis disabled for now
+    # redis_url: str = "redis://localhost:6379/0"
 
     base_url: str = "http://localhost:8000"
     redirect_cache_ttl_seconds: int = 3600

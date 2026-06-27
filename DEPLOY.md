@@ -1,12 +1,28 @@
 # Deploy to DigitalOcean App Platform
 
-Deploy the **in-memory basic version** as a single container. Data resets on redeploy/restart.
+Deploy with **DigitalOcean Managed PostgreSQL** and in-memory redirect cache (Redis disabled for now).
 
 ## Prerequisites
 
 1. [DigitalOcean account](https://cloud.digitalocean.com/registrations/new)
-2. [GitHub account](https://github.com) with this repo pushed
-3. [doctl CLI](https://docs.digitalocean.com/reference/doctl/how-to/install/) (optional, for CLI deploy)
+2. **Managed PostgreSQL** database created in DigitalOcean
+3. [GitHub account](https://github.com) with this repo pushed
+4. [doctl CLI](https://docs.digitalocean.com/reference/doctl/how-to/install/) (optional, for CLI deploy)
+
+## DigitalOcean PostgreSQL setup
+
+1. Create a managed PostgreSQL cluster in DigitalOcean
+2. Under **Settings → Trusted Sources**, add:
+   - Your **App Platform app** (when deployed)
+   - Your **local IP** for devcontainer testing
+3. Copy the connection details into `.env` (never commit `.env`):
+
+```env
+DATABASE_URL=postgresql+asyncpg://db-dev:YOUR_PASSWORD@YOUR_HOST:25060/db-dev
+DATABASE_SSL_REQUIRED=true
+```
+
+Tables are created automatically on startup via `init_db()`.
 
 ## Step 1 — Push code to GitHub
 
@@ -63,6 +79,8 @@ chmod +x scripts/deploy-digitalocean.sh
    |---|---|
    | `APP_ENV` | `production` |
    | `BASE_URL` | `${APP_URL}` |
+   | `DATABASE_URL` | `postgresql+asyncpg://db-dev:PASSWORD@HOST:25060/db-dev` |
+   | `DATABASE_SSL_REQUIRED` | `true` |
    | `LOG_LEVEL` | `INFO` |
 
 7. Choose plan: **Basic** → `$5/mo` (512 MB RAM)
@@ -88,13 +106,15 @@ curl -X POST "$APP_URL/api/v1/urls" \
   -d '{"long_url":"https://example.com","custom_alias":"demo"}'
 ```
 
-## Important limitations (basic version)
+## Important notes
 
-| Limitation | Detail |
+| Topic | Detail |
 |---|---|
-| In-memory storage | Short URLs are lost on restart/redeploy |
-| Single instance only | Do not scale beyond 1 instance |
-| No HTTPS custom domain setup | Included in DO default URL; add custom domain in App Platform settings |
+| PostgreSQL | Required — stores URLs persistently |
+| Redis | Disabled — using in-memory cache (single instance) |
+| SSL | Required for DO managed Postgres (`DATABASE_SSL_REQUIRED=true`) |
+| Trusted Sources | Must whitelist App Platform + your dev IP in DO dashboard |
+| Single instance | Keep instance count at 1 while using in-memory cache |
 
 ## Upgrade path (production)
 
