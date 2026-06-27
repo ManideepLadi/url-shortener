@@ -83,18 +83,3 @@ async def init_db() -> None:
 async def close_db() -> None:
     await engine.dispose()
     logger.info("Database connections closed")
-
-# ---------------------------------------------------------------------------
-# Redis (disabled — uncomment when ready)
-# ---------------------------------------------------------------------------
-# from redis.asyncio import Redis
-#
-# async def get_redis_client() -> AsyncGenerator[Redis, None]:
-#     client = Redis.from_url(
-#         settings.redis_url,
-#         decode_responses=True,
-#     )
-#     try:
-#         yield client
-#     finally:
-#         await client.aclose()

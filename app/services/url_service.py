@@ -1,7 +1,7 @@
 import logging
 
 from app.config import settings
-from app.db.redis_client import UrlCache
+from app.db.in_memory_cache import InMemoryUrlCache
 from app.models.url import UrlMapping
 from app.repositories.url_repository import UrlRepository
 from app.schemas.url import CreateUrlRequest, CreateUrlResponse, UrlMetadataResponse
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class UrlService:
-    def __init__(self, repository: UrlRepository, cache: UrlCache) -> None:
+    def __init__(self, repository: UrlRepository, cache: InMemoryUrlCache) -> None:
         self._repository = repository
         self._cache = cache
         self._base_url = settings.base_url.rstrip("/")
