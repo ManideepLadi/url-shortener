@@ -1,4 +1,26 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def normalize_database_url(url: str) -> str:
+    """
+    Force asyncpg driver for SQLAlchemy async engine.
+
+    DigitalOcean and other providers often supply postgresql:// URLs,
+    which make SQLAlchemy load psycopg2 instead of asyncpg.
+    """
+    normalized = url.strip()
+    if normalized.startswith("postgresql+asyncpg://"):
+        return normalized
+
+    if "://" not in normalized:
+        return normalized
+
+    scheme, rest = normalized.split("://", 1)
+    if scheme in {"postgres", "postgresql"} or scheme.startswith("postgresql+"):
+        return f"postgresql+asyncpg://{rest}"
+
+    return normalized
 
 
 class Settings(BaseSettings):
@@ -15,9 +37,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://db-dev:password@localhost:5432/db-dev"
     database_ssl_required: bool = True
 
-    # Redis disabled for now
-    # redis_url: str = "redis://localhost:6379/0"
-
     base_url: str = "http://localhost:8000"
     redirect_cache_ttl_seconds: int = 3600
     auto_alias_length: int = 8
@@ -25,6 +44,11 @@ class Settings(BaseSettings):
 
     db_init_max_retries: int = 10
     db_init_retry_delay_seconds: float = 2.0
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, value: str) -> str:
+        return normalize_database_url(value)
 
 
 settings = Settings()

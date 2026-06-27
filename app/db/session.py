@@ -5,9 +5,11 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.config import masked_database_url, settings
+from app.config import masked_database_url, normalize_database_url, settings
 
 logger = logging.getLogger(__name__)
+
+DATABASE_URL = normalize_database_url(settings.database_url)
 
 
 def _build_connect_args() -> dict:
@@ -18,7 +20,7 @@ def _build_connect_args() -> dict:
 
 
 engine = create_async_engine(
-    settings.database_url,
+    DATABASE_URL,
     pool_pre_ping=True,
     echo=settings.app_env == "development",
     connect_args=_build_connect_args(),
@@ -70,7 +72,7 @@ async def init_db() -> None:
 
     logger.error(
         "Could not connect to PostgreSQL at %s after %s attempts.",
-        masked_database_url(settings.database_url),
+        masked_database_url(DATABASE_URL),
         max_retries,
     )
     raise RuntimeError(
