@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.db.session import close_db, init_db
 from app.middleware.logging import RequestLoggingMiddleware
+from app.middleware.prometheus import PrometheusMiddleware
+from app.routers.metrics import metrics_router
 from app.routers.urls import api_router, health_router, redirect_router
 from app.utils.exceptions import AppError
 
@@ -36,8 +38,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(PrometheusMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 
+app.include_router(metrics_router)
 app.include_router(health_router)
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(redirect_router)

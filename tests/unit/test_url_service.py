@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -48,14 +48,16 @@ class TestCreateShortUrl:
     async def test_create_with_custom_alias(self, service, repository, cache):
         repository.create.return_value = _mapping(alias="my-link")
 
-        result = await service.create_short_url(
-            CreateUrlRequest(
-                long_url="https://example.com/path",
-                custom_alias="my-link",
+        with patch("app.services.url_service.record_url_created") as record:
+            result = await service.create_short_url(
+                CreateUrlRequest(
+                    long_url="https://example.com/path",
+                    custom_alias="my-link",
+                )
             )
-        )
 
         assert result.alias == "my-link"
+        record.assert_called_once_with(alias_source="custom", strategy="none")
         assert result.short_url.endswith("/my-link")
         repository.create.assert_awaited_once_with(
             alias="my-link",
@@ -92,9 +94,11 @@ class TestResolveRedirect:
     async def test_returns_cached_url(self, service, repository, cache):
         cache.get_long_url.return_value = "https://cached.example"
 
-        url = await service.resolve_redirect("abc123")
+        with patch("app.services.url_service.record_redirect") as record:
+            url = await service.resolve_redirect("abc123")
 
         assert url == "https://cached.example"
+        record.assert_called_once_with(cache_hit=True)
         repository.get_by_alias.assert_not_awaited()
         cache.increment_hits.assert_awaited_once_with("abc123")
 
@@ -102,9 +106,11 @@ class TestResolveRedirect:
     async def test_loads_from_db_on_cache_miss(self, service, repository, cache):
         repository.get_by_alias.return_value = _mapping()
 
-        url = await service.resolve_redirect("abc123")
+        with patch("app.services.url_service.record_redirect") as record:
+            url = await service.resolve_redirect("abc123")
 
         assert url == "https://example.com"
+        record.assert_called_once_with(cache_hit=False)
         cache.set_long_url.assert_awaited_once()
         cache.increment_hits.assert_awaited_once_with("abc123")
 

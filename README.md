@@ -9,12 +9,19 @@ app/
 ├── routers/        # HTTP handlers (thin)
 ├── services/       # Business logic
 ├── repositories/   # PostgreSQL access
+├── strategies/     # Pluggable alias generation (random, base62)
 ├── models/         # SQLAlchemy entities
 ├── schemas/        # Pydantic request/response validation
 ├── db/             # Database session, SSL, in-memory cache
-├── middleware/     # Request logging
+├── utils/          # Alias validation, Base62, exceptions
+├── middleware/     # Request logging, Prometheus HTTP metrics
+├── metrics/        # Prometheus metric definitions
 ├── config.py       # Environment-based settings
 └── dependencies.py # FastAPI dependency injection
+
+scripts/
+├── check-db.sh     # Verify PostgreSQL connectivity
+└── run-dev.sh      # Start dev server on :8000
 ```
 
 ### Storage model
@@ -26,15 +33,147 @@ app/
 
 Redis is not used. The in-memory cache is per-process; keep App Platform instance count at **1** while using it.
 
+### Write architecture — create short URL
+
+`POST /api/v1/urls` persists a new mapping to PostgreSQL and warms the in-memory redirect cache.
+
+```mermaid
+flowchart TD
+    subgraph Client
+        A[POST /api/v1/urls<br/>long_url + optional custom_alias]
+    end
+
+    subgraph API["FastAPI layer"]
+        B[urls router]
+        C[CreateUrlRequest<br/>Pydantic validation]
+    end
+
+    subgraph Service["Business logic"]
+        D[UrlService.create_short_url]
+        E{custom_alias<br/>provided?}
+        F[RandomAliasStrategy<br/>or Base62AliasStrategy]
+        G[UrlRepository.create]
+        H[UrlRepository.create_and_flush<br/>→ finalize_alias]
+    end
+
+    subgraph Storage
+        I[("PostgreSQL<br/>url_mappings INSERT")]
+        J[InMemoryUrlCache<br/>set_long_url]
+    end
+
+    K[201 CreateUrlResponse<br/>alias + short_url]
+
+    A --> B --> C --> D --> E
+    E -->|Yes| G
+    E -->|No| F
+    F -->|random| G
+    F -->|base62| H
+    G --> I
+    H --> I
+    I --> J --> K
+```
+
+| Step | Component | Action |
+|---|---|---|
+| 1 | `CreateUrlRequest` | Validates URL format, custom alias rules, reserved words |
+| 2 | `UrlService` | Routes to custom alias path or configured strategy |
+| 3 | `RandomAliasStrategy` | Generates random alias; retries on DB collision |
+| 3 | `Base62AliasStrategy` | Inserts row, encodes autoincrement `id` as Base62 alias |
+| 4 | `UrlRepository` | Commits to PostgreSQL; enforces unique `alias` constraint |
+| 5 | `InMemoryUrlCache` | Stores `alias → long_url` for fast future redirects |
+| 6 | Response | Returns `201` with `short_url`, `access_count: 0` |
+
+---
+
+### Read architecture — redirect & metadata
+
+Read paths are separate. Redirects favour the cache; metadata reads flush buffered hit counts back to PostgreSQL.
+
+```mermaid
+flowchart TD
+    subgraph Client
+        R1[GET /{alias}]
+        R2[GET /{alias}?preview=true]
+        R3[GET /api/v1/urls/{alias}]
+    end
+
+    subgraph API["FastAPI layer"]
+        B1[redirect router]
+        B2[urls router]
+    end
+
+    subgraph Service["Business logic"]
+        S1[UrlService.resolve_redirect]
+        S2[UrlService.get_metadata]
+    end
+
+    subgraph Cache["InMemoryUrlCache"]
+        C1{redirect cache<br/>hit?}
+        C2[increment_hits]
+        C3[set_long_url]
+        C4[get_pending_hits]
+        C5[reset_pending_hits]
+    end
+
+    subgraph Storage
+        PG[("PostgreSQL<br/>url_mappings SELECT / UPDATE")]
+    end
+
+    subgraph Response
+        O1[307 Redirect<br/>Location: long_url]
+        O2[200 JSON preview<br/>redirect_url]
+        O3[200 JSON metadata<br/>access_count + long_url]
+    end
+
+    R1 --> B1 --> S1
+    R2 --> B1 --> S1
+    R3 --> B2 --> S2
+
+    S1 --> C1
+    C1 -->|Yes| C2
+    C1 -->|No| PG
+    PG -->|found| C3 --> C2
+    PG -->|not found| E404[404 Not Found]
+    C2 --> O1
+    C2 --> O2
+
+    S2 --> PG
+    PG -->|not found| E404
+    PG -->|found| C4
+    C4 -->|pending hits > 0| C5
+    C5 --> PG
+    PG --> O3
+```
+
+#### Redirect read path (`GET /{alias}`)
+
+| Step | Component | Action |
+|---|---|---|
+| 1 | `InMemoryUrlCache` | Look up `alias → long_url` (TTL-based) |
+| 2 | Cache hit | Increment buffered hit count; return long URL |
+| 3 | Cache miss | `UrlRepository.get_by_alias()` → PostgreSQL |
+| 4 | Found | Populate cache, increment hits, return long URL |
+| 5 | Router | `307 Redirect` or `200 JSON` when `?preview=true` |
+
+#### Metadata read path (`GET /api/v1/urls/{alias}`)
+
+| Step | Component | Action |
+|---|---|---|
+| 1 | `UrlRepository` | Always reads mapping from PostgreSQL |
+| 2 | `InMemoryUrlCache` | Adds pending buffered hits to displayed count |
+| 3 | Flush | Writes buffered hits to PostgreSQL via `increment_access_count` |
+| 4 | Response | Returns full metadata including accurate `access_count` |
+
 ### Design trade-offs
 
 | Decision | Why | Trade-off |
 |---|---|---|
+| Strategy pattern for aliases | Swap random vs Base62 without changing service code | One extra abstraction layer |
 | DB unique constraint on `alias` | Correct collision handling under concurrency | Requires catching `IntegrityError` |
 | In-memory redirect cache | Faster redirects, fewer DB reads on hot links | Cache is lost on restart; not shared across instances |
 | Buffered hit counts | Fewer DB writes on every redirect | Access counts are eventually consistent until metadata is read |
 | Async SQLAlchemy + asyncpg | Fits FastAPI concurrency model | SSL setup required for managed Postgres |
-| 307 redirects | Preserves HTTP method on redirect | Some clients treat 302/307 differently |
+| 307 redirects | Preserves HTTP method on redirect | Swagger cannot follow external redirects (CORS) |
 
 ## Requirements
 
@@ -54,7 +193,7 @@ cp .env.example .env
 For **DigitalOcean Managed PostgreSQL**:
 - Add your dev IP to **Databases → Settings → Trusted Sources**
 - Set `DATABASE_SSL_VERIFY_CA=false` for local dev (no CA file needed)
-- Set `DATABASE_SSL_VERIFY_CA=true` + `DATABASE_CA_CERT` for production
+- Set `DATABASE_SSL_VERIFY_CA=true` + `DATABASE_CA_CERT` for production verify-full
 
 See [DEPLOY.md](./DEPLOY.md) for App Platform deployment.
 
@@ -83,6 +222,15 @@ API docs: http://localhost:8000/docs
 
 ## API
 
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/urls` | Create a short URL |
+| `GET` | `/api/v1/urls/{alias}` | Get metadata (alias, long URL, hit count) |
+| `GET` | `/{alias}` | Redirect to long URL (307) |
+| `GET` | `/{alias}?preview=true` | Preview redirect target as JSON (Swagger-friendly) |
+| `GET` | `/health` | Health check (database + cache status) |
+| `GET` | `/metrics` | Prometheus metrics (when `METRICS_ENABLED=true`) |
+
 ### Create short URL
 
 ```http
@@ -107,11 +255,15 @@ Response `201 Created`:
 }
 ```
 
+Omit `custom_alias` to auto-generate an alias using the configured strategy (`random` or `base62`).
+
 ### Get metadata
 
 ```http
 GET /api/v1/urls/{alias}
 ```
+
+Returns alias, `long_url`, `short_url`, `access_count`, and `created_at`. Flushes buffered redirect hits into PostgreSQL.
 
 ### Redirect
 
@@ -119,19 +271,73 @@ GET /api/v1/urls/{alias}
 GET /{alias}
 ```
 
-Returns `307 Temporary Redirect` to the original URL.
+Returns **307 Temporary Redirect** to the original URL.
 
-**Testing redirects:** Swagger UI cannot follow redirects to external sites (browser CORS blocks it). Use one of:
+Preview mode (returns JSON instead of redirecting):
 
-- Browser address bar: `https://your-app.ondigitalocean.app/{alias}`
-- curl: `curl -I https://your-app.ondigitalocean.app/{alias}`
-- Swagger preview mode: `GET /{alias}?preview=true` → JSON with `redirect_url`
-- Metadata API: `GET /api/v1/urls/{alias}` → includes `long_url`
+```http
+GET /{alias}?preview=true
+```
+
+```json
+{
+  "alias": "manideep",
+  "redirect_url": "https://example.com/",
+  "status_code": 307
+}
+```
+
+**Testing redirects**
+
+| Method | Works in Swagger? | Example |
+|---|---|---|
+| Browser address bar | — | `https://your-app.ondigitalocean.app/manideep` |
+| curl | — | `curl -I https://your-app.ondigitalocean.app/manideep` |
+| Preview mode | Yes | `GET /manideep?preview=true` |
+| Metadata API | Yes | `GET /api/v1/urls/manideep` |
+| Direct redirect in Swagger | No | Browser CORS blocks following 307 to external sites |
 
 ### Health
 
 ```http
 GET /health
+```
+
+```json
+{
+  "status": "ok",
+  "database": "ok",
+  "cache": "in-memory"
+}
+```
+
+### Prometheus metrics
+
+```http
+GET /metrics
+```
+
+Exposes Prometheus text format for scraping. Disable with `METRICS_ENABLED=false`.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `http_requests_total` | Counter | `method`, `path`, `status` | HTTP requests (low-cardinality paths) |
+| `http_request_duration_seconds` | Histogram | `method`, `path` | Request latency |
+| `url_shortener_urls_created_total` | Counter | `alias_source`, `strategy` | Short URLs created (`custom`/`auto`, `random`/`base62`/`none`) |
+| `url_shortener_redirects_total` | Counter | `cache_result` | Redirects resolved (`hit`/`miss`) |
+| `url_shortener_metadata_requests_total` | Counter | — | Metadata API calls |
+| `url_shortener_redirect_cache_entries` | Gauge | — | Cached alias→URL mappings |
+| `url_shortener_redirect_cache_pending_hits` | Gauge | — | Buffered hit counts awaiting flush |
+
+Example scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: url-shortener
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["your-app.ondigitalocean.app:443"]
+    scheme: https
 ```
 
 ---
@@ -146,7 +352,7 @@ flowchart TD
     B -->|No| E422[422 Validation Error]
     B -->|Yes| C{custom_alias provided?}
     C -->|Yes| D[Use custom alias]
-    C -->|No| F[Generate random alias]
+    C -->|No| F[Alias strategy: random or base62]
     D --> G[Save to PostgreSQL]
     F --> H{Unique after retries?}
     H -->|No| E503[503 Alias Generation Failed]
@@ -171,10 +377,10 @@ UrlService.create_short_url()
        │                                         │
        No                                        │ IntegrityError → 409
        ▼                                         ▼
-_generate random alias (up to 5 retries)    InMemoryUrlCache.set_long_url()
-       │                                         │
-       └── collision ──► retry or 503            ▼
-                                            201 Created response
+AliasGenerationStrategy.create_auto_alias()  InMemoryUrlCache.set_long_url()
+  (random or base62)                              │
+       │                                          ▼
+       └── collision ──► retry or 503       201 Created response
 ```
 
 #### Step 1 — Request validation
@@ -208,31 +414,29 @@ When `custom_alias` is provided:
 
 The database enforces uniqueness via a unique index on `alias`. Concurrent requests that race for the same alias are resolved safely by catching `IntegrityError`.
 
-#### Step 3 — Auto-generated alias path
+#### Step 3 — Auto-generated alias path (strategy pattern)
 
-When `custom_alias` is omitted:
+When `custom_alias` is omitted, `UrlService` delegates to the configured **alias generation strategy**:
 
-1. The configured **alias strategy** generates the alias (see below).
-2. Skip if the alias matches a reserved word (random strategy only; base62 handles via offset).
-3. Attempt insert into PostgreSQL.
-4. On collision → retry up to `AUTO_ALIAS_MAX_RETRIES` times (random strategy only).
-5. If all retries fail → `503 Service Unavailable`.
-
-#### Alias generation strategies
-
-Configured via `AUTO_ALIAS_STRATEGY` (`random` or `base62`).
-
-| Strategy | Env value | How the alias is produced |
+| Strategy | Class | How it works |
 |---|---|---|
-| **Random** (default) | `random` | `secrets`-based random string, length = `AUTO_ALIAS_LENGTH` (default 8) |
-| **Base62** | `base62` | PostgreSQL autoincrement `id` encoded as Base62, padded to `AUTO_ALIAS_LENGTH` |
+| **Random** (default) | `RandomAliasStrategy` | `secrets`-based random string; retries on DB collision |
+| **Base62** | `Base62AliasStrategy` | Insert row → flush to get autoincrement `id` → encode as Base62 → finalize alias |
 
-Base62 example: record `id=5` with `AUTO_ALIAS_LENGTH=3` → alias `005`.
+Configured via `AUTO_ALIAS_STRATEGY`:
 
 ```env
+# Random (default) — unpredictable 8-char alias
+AUTO_ALIAS_STRATEGY=random
+AUTO_ALIAS_LENGTH=8
+AUTO_ALIAS_MAX_RETRIES=5
+
+# Base62 — deterministic alias from record ID
 AUTO_ALIAS_STRATEGY=base62
-AUTO_ALIAS_LENGTH=3
+AUTO_ALIAS_LENGTH=3    # minimum encoded length (id=5 → "005")
 ```
+
+Base62 alphabet: `0-9`, `A-Z`, `a-z`. Implementation in `app/utils/base62.py`, strategies in `app/strategies/`.
 
 #### Step 4 — Cache and response
 
@@ -245,28 +449,28 @@ After a successful insert:
 
 | Request | Result |
 |---|---|
-| Valid URL, no alias | `201` with random alias |
+| Valid URL, no alias | `201` with auto-generated alias |
 | Valid URL + custom alias | `201` with that alias |
 | Invalid URL | `422` |
 | Alias too short / bad characters | `422` |
 | Reserved alias (`health`, `api`, …) | `422` |
 | Custom alias already taken | `409` |
-| Auto alias: 5 collisions in a row | `503` |
+| Auto alias: max retries exhausted (random) | `503` |
 
 ---
 
 ### Redirect flow
 
 ```
-GET /{alias}
-       │
-       ▼
-UrlService.resolve_redirect()
-       │
-       ├── cache hit? ──Yes──► increment buffered hits ──► 307 redirect
-       │
-       No
-       ▼
+GET /{alias}                          GET /{alias}?preview=true
+       │                                       │
+       ▼                                       ▼
+UrlService.resolve_redirect()          UrlService.resolve_redirect()
+       │                                       │
+       ├── cache hit? ──Yes──► increment hits  ├── same lookup path
+       │                                       │
+       No                                       ▼
+       ▼                                  200 JSON { redirect_url }
 UrlRepository.get_by_alias() ──► PostgreSQL
        │
        ├── not found ──► 404
@@ -275,7 +479,7 @@ UrlRepository.get_by_alias() ──► PostgreSQL
 ```
 
 - Redirects use **307 Temporary Redirect** so the HTTP method is preserved.
-- Hit counts are buffered in memory on each redirect (not written to DB immediately).
+- Hit counts are buffered in memory on each redirect (including preview mode).
 - Cache entries expire after `REDIRECT_CACHE_TTL_SECONDS` (default 3600).
 
 ---
@@ -302,8 +506,9 @@ Reading metadata flushes any pending buffered hit counts from the in-memory cach
 
 | Status | Scenario |
 |---|---|
+| `200` | Redirect preview (`?preview=true`) |
 | `201` | URL created |
-| `307` | Redirect |
+| `307` | Redirect to long URL |
 | `404` | Unknown alias |
 | `409` | Custom alias collision |
 | `422` | Invalid input (bad URL, bad alias, reserved alias) |
@@ -315,17 +520,66 @@ Reading metadata flushes any pending buffered hit counts from the in-memory cach
 
 See `.env.example` for all settings.
 
+### Local development
+
+```env
+APP_NAME=url-shortener
+APP_ENV=development
+LOG_LEVEL=INFO
+
+DATABASE_URL=postgresql+asyncpg://db-dev:YOUR_PASSWORD@YOUR_HOST:25060/db-dev
+DATABASE_SSL_REQUIRED=true
+DATABASE_SSL_VERIFY_CA=false
+DATABASE_CA_CERT=
+
+BASE_URL=http://localhost:8000
+AUTO_ALIAS_STRATEGY=random
+AUTO_ALIAS_LENGTH=8
+AUTO_ALIAS_MAX_RETRIES=5
+REDIRECT_CACHE_TTL_SECONDS=3600
+DB_INIT_MAX_RETRIES=10
+DB_INIT_RETRY_DELAY_SECONDS=2.0
+```
+
+### Production (DigitalOcean App Platform)
+
+Link the database under **Resources**, then set:
+
+```env
+APP_ENV=production
+BASE_URL=${APP_URL}
+DATABASE_URL=${db-dev.DATABASE_URL}
+DATABASE_SSL_REQUIRED=true
+DATABASE_SSL_VERIFY_CA=false
+DATABASE_CA_CERT=
+LOG_LEVEL=INFO
+METRICS_ENABLED=true
+AUTO_ALIAS_STRATEGY=random
+```
+
+For verify-full SSL (recommended once CA cert is linked):
+
+```env
+DATABASE_SSL_VERIFY_CA=true
+DATABASE_CA_CERT=${db-dev.CA_CERT}
+```
+
+> Replace `db-dev` with your actual database pool name if different.
+
 | Variable | Description |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string (auto-converted to `postgresql+asyncpg://`) |
+| `DATABASE_URL` | PostgreSQL connection string (auto-converted to `postgresql+asyncpg://`; `sslmode` stripped) |
 | `DATABASE_SSL_REQUIRED` | Enable SSL for managed Postgres (`true`) |
-| `DATABASE_SSL_VERIFY_CA` | `false` = encrypt only (local dev); `true` = verify-full (production) |
-| `DATABASE_CA_CERT` | PEM content for verify-full; use `${defaultdb.CA_CERT}` on App Platform |
-| `BASE_URL` | Public base URL for generated short links |
-| `AUTO_ALIAS_STRATEGY` | Alias generation strategy: `random` or `base62` (default `random`) |
+| `DATABASE_SSL_VERIFY_CA` | `false` = encrypt only; `true` = verify-full with CA cert |
+| `DATABASE_CA_CERT` | PEM content for verify-full; use `${db-dev.CA_CERT}` on App Platform |
+| `BASE_URL` | Public base URL for generated short links (`${APP_URL}` in production) |
+| `AUTO_ALIAS_STRATEGY` | `random` (default) or `base62` |
 | `AUTO_ALIAS_LENGTH` | Random alias length, or Base62 minimum length (default 8) |
-| `AUTO_ALIAS_MAX_RETRIES` | Max collision retries for auto aliases (default 5) |
+| `AUTO_ALIAS_MAX_RETRIES` | Max collision retries for random strategy (default 5) |
 | `REDIRECT_CACHE_TTL_SECONDS` | In-memory cache TTL (default 3600) |
+| `DB_INIT_MAX_RETRIES` | Startup DB connection retries (default 10) |
+| `DB_INIT_RETRY_DELAY_SECONDS` | Delay between startup retries (default 2.0) |
+| `METRICS_ENABLED` | Expose `/metrics` and collect Prometheus metrics (default `true`) |
 
 ---
 
@@ -338,16 +592,18 @@ pytest -m integration   # integration tests (requires live PostgreSQL)
 pytest --cov=app
 ```
 
-Unit tests cover alias validation and service logic with mocks. Integration tests verify create, redirect, collision handling, and health checks against PostgreSQL.
+Unit tests cover alias validation, Base62 encode/decode, alias strategies (random + base62), service logic, and config normalization. Integration tests verify create, redirect, preview mode, collision handling, and health checks against PostgreSQL.
 
 ---
 
 ## Deployment
 
-See [DEPLOY.md](./DEPLOY.md) for DigitalOcean App Platform setup, environment variables, and SSL configuration.
+See [DEPLOY.md](./DEPLOY.md) for DigitalOcean App Platform setup, SSL troubleshooting, and environment variables.
 
 ## Run with Docker
 
 ```bash
 docker compose up --build
 ```
+
+Uses `requirements.txt` (production deps). Dev/test dependencies are in `requirements-dev.txt`.

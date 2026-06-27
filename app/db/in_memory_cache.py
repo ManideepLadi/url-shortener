@@ -3,6 +3,7 @@ import logging
 import time
 
 from app.config import settings
+from app.metrics.prometheus import refresh_cache_gauges
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,13 @@ class InMemoryUrlCache:
         self._lock = asyncio.Lock()
         self._ttl = settings.redirect_cache_ttl_seconds
 
+    def _update_metrics(self) -> None:
+        if settings.metrics_enabled:
+            refresh_cache_gauges(
+                redirect_entries=len(self._redirects),
+                pending_hits=sum(self._hits.values()),
+            )
+
     async def get_long_url(self, alias: str) -> str | None:
         async with self._lock:
             entry = self._redirects.get(alias)
@@ -29,6 +37,7 @@ class InMemoryUrlCache:
             long_url, expires_at = entry
             if time.monotonic() > expires_at:
                 del self._redirects[alias]
+                self._update_metrics()
                 return None
             return long_url
 
@@ -38,15 +47,18 @@ class InMemoryUrlCache:
                 long_url,
                 time.monotonic() + self._ttl,
             )
+            self._update_metrics()
 
     async def invalidate(self, alias: str) -> None:
         async with self._lock:
             self._redirects.pop(alias, None)
             self._hits.pop(alias, None)
+            self._update_metrics()
 
     async def increment_hits(self, alias: str) -> None:
         async with self._lock:
             self._hits[alias] = self._hits.get(alias, 0) + 1
+            self._update_metrics()
 
     async def get_pending_hits(self, alias: str) -> int:
         async with self._lock:
@@ -54,4 +66,6 @@ class InMemoryUrlCache:
 
     async def reset_pending_hits(self, alias: str) -> int:
         async with self._lock:
-            return self._hits.pop(alias, 0)
+            count = self._hits.pop(alias, 0)
+            self._update_metrics()
+            return count

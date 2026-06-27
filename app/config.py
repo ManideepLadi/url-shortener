@@ -110,6 +110,8 @@ class Settings(BaseSettings):
     db_init_max_retries: int = 10
     db_init_retry_delay_seconds: float = 2.0
 
+    metrics_enabled: bool = True
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, value: str) -> str:

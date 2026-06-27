@@ -5,6 +5,7 @@ from app.db.in_memory_cache import InMemoryUrlCache
 from app.models.url import UrlMapping
 from app.repositories.url_repository import UrlRepository
 from app.schemas.url import CreateUrlRequest, CreateUrlResponse, UrlMetadataResponse
+from app.metrics.prometheus import record_metadata_request, record_redirect, record_url_created
 from app.strategies.base import AliasGenerationStrategy
 from app.utils.exceptions import UrlMappingNotFoundError
 
@@ -44,11 +45,16 @@ class UrlService:
                 long_url=long_url,
             )
             await self._cache.set_long_url(mapping.alias, mapping.long_url)
+            record_url_created(alias_source="custom", strategy="none")
             logger.info("Created custom alias=%s", mapping.alias)
             return CreateUrlResponse(**self._to_metadata(mapping, mapping.access_count).model_dump())
 
         mapping = await self._alias_strategy.create_auto_alias(self._repository, long_url)
         await self._cache.set_long_url(mapping.alias, mapping.long_url)
+        record_url_created(
+            alias_source="auto",
+            strategy=self._alias_strategy.name,
+        )
         logger.info(
             "Created auto alias=%s strategy=%s",
             mapping.alias,
@@ -57,6 +63,7 @@ class UrlService:
         return CreateUrlResponse(**self._to_metadata(mapping, mapping.access_count).model_dump())
 
     async def get_metadata(self, alias: str) -> UrlMetadataResponse:
+        record_metadata_request()
         mapping = await self._repository.get_by_alias(alias)
         if mapping is None:
             raise UrlMappingNotFoundError(alias)
@@ -77,6 +84,7 @@ class UrlService:
         cached_url = await self._cache.get_long_url(alias)
         if cached_url:
             await self._cache.increment_hits(alias)
+            record_redirect(cache_hit=True)
             logger.debug("Redirect cache hit alias=%s", alias)
             return cached_url
 
@@ -86,5 +94,6 @@ class UrlService:
 
         await self._cache.set_long_url(mapping.alias, mapping.long_url)
         await self._cache.increment_hits(alias)
+        record_redirect(cache_hit=False)
         logger.debug("Redirect cache miss alias=%s", alias)
         return mapping.long_url
