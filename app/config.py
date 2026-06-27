@@ -1,26 +1,63 @@
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# libpq/psycopg2 query params that asyncpg does not accept as connect() kwargs
+_UNSUPPORTED_QUERY_PARAMS = frozenset(
+    {
+        "sslmode",
+        "sslrootcert",
+        "sslcert",
+        "sslkey",
+        "sslcrl",
+        "sslcompression",
+        "requiressl",
+        "channel_binding",
+    }
+)
 
 
 def normalize_database_url(url: str) -> str:
     """
-    Force asyncpg driver for SQLAlchemy async engine.
+    Prepare a DATABASE_URL for SQLAlchemy + asyncpg.
 
-    DigitalOcean and other providers often supply postgresql:// URLs,
-    which make SQLAlchemy load psycopg2 instead of asyncpg.
+    - Converts postgresql:// to postgresql+asyncpg://
+    - Strips sslmode and other libpq-only query params (SSL is handled via connect_args)
     """
     normalized = url.strip()
-    if normalized.startswith("postgresql+asyncpg://"):
-        return normalized
-
     if "://" not in normalized:
         return normalized
 
-    scheme, rest = normalized.split("://", 1)
-    if scheme in {"postgres", "postgresql"} or scheme.startswith("postgresql+"):
-        return f"postgresql+asyncpg://{rest}"
+    if normalized.startswith("postgres://"):
+        normalized = "postgresql://" + normalized.removeprefix("postgres://")
 
-    return normalized
+    parsed = urlparse(normalized)
+    scheme = parsed.scheme
+
+    if scheme in {"postgresql", "postgres"}:
+        scheme = "postgresql+asyncpg"
+    elif scheme.startswith("postgresql+") and scheme != "postgresql+asyncpg":
+        scheme = "postgresql+asyncpg"
+    elif scheme != "postgresql+asyncpg":
+        return normalized
+
+    query_params = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in _UNSUPPORTED_QUERY_PARAMS
+    ]
+
+    return urlunparse(
+        (
+            scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            urlencode(query_params),
+            parsed.fragment,
+        )
+    )
 
 
 class Settings(BaseSettings):
