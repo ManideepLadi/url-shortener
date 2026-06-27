@@ -97,7 +97,11 @@ class TestBase62AliasStrategy:
         repository.finalize_alias.return_value = finalized
 
         strategy = Base62AliasStrategy(min_length=3)
-        result = await strategy.create_auto_alias(repository, "https://example.com")
+        result = await strategy.create_auto_alias(
+            repository,
+            "https://example.com",
+            expires_at=None,
+        )
 
         assert result.alias == "005"
         repository.create_and_flush.assert_awaited_once()
@@ -114,5 +118,4 @@ class TestBase62AliasStrategy:
 
         with pytest.raises(AliasAlreadyExistsError):
             await strategy.create_auto_alias(repository, "https://example.com")
-
         repository.discard_pending.assert_awaited_once_with(flushed)

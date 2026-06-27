@@ -1,5 +1,6 @@
 import logging
 import secrets
+from datetime import datetime
 
 from app.models.url import UrlMapping
 from app.repositories.url_repository import UrlRepository
@@ -33,11 +34,14 @@ class Base62AliasStrategy(AliasGenerationStrategy):
         self,
         repository: UrlRepository,
         long_url: str,
+        *,
+        expires_at: datetime | None = None,
     ) -> UrlMapping:
         temp_alias = secrets.token_hex(16)
         mapping = await repository.create_and_flush(
             alias=temp_alias,
             long_url=long_url,
+            expires_at=expires_at,
         )
         alias = self.encode_record_id(mapping.id)
 

@@ -1,5 +1,6 @@
 import logging
 import secrets
+from datetime import datetime
 
 from app.models.url import UrlMapping
 from app.repositories.url_repository import UrlRepository
@@ -23,6 +24,8 @@ class RandomAliasStrategy(AliasGenerationStrategy):
         self,
         repository: UrlRepository,
         long_url: str,
+        *,
+        expires_at: datetime | None = None,
     ) -> UrlMapping:
         last_error: AliasAlreadyExistsError | None = None
 
@@ -31,7 +34,11 @@ class RandomAliasStrategy(AliasGenerationStrategy):
             if alias.lower() in RESERVED_ALIASES:
                 continue
             try:
-                return await repository.create(alias=alias, long_url=long_url)
+                return await repository.create(
+                    alias=alias,
+                    long_url=long_url,
+                    expires_at=expires_at,
+                )
             except AliasAlreadyExistsError as exc:
                 last_error = exc
                 logger.warning(

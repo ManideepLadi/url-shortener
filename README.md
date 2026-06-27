@@ -239,9 +239,13 @@ Content-Type: application/json
 
 {
   "long_url": "https://example.com/very/long/path",
-  "custom_alias": "optional-alias"
+  "custom_alias": "optional-alias",
+  "ttl_seconds": 3600
 }
 ```
+
+- `ttl_seconds` (optional) — link expires after this many seconds (stored as `expires_at` in PostgreSQL)
+- Omit `ttl_seconds` for permanent links, or set `DEFAULT_LINK_TTL_SECONDS` to apply a server default
 
 Response `201 Created`:
 
@@ -251,7 +255,8 @@ Response `201 Created`:
   "long_url": "https://example.com/very/long/path",
   "short_url": "http://localhost:8000/optional-alias",
   "access_count": 0,
-  "created_at": "2024-01-01T00:00:00Z"
+  "created_at": "2024-01-01T00:00:00Z",
+  "expires_at": "2024-01-01T01:00:00Z"
 }
 ```
 
@@ -511,7 +516,8 @@ Reading metadata flushes any pending buffered hit counts from the in-memory cach
 | `307` | Redirect to long URL |
 | `404` | Unknown alias |
 | `409` | Custom alias collision |
-| `422` | Invalid input (bad URL, bad alias, reserved alias) |
+| `410` | Link has expired |
+| `422` | Invalid input (bad URL, bad alias, reserved alias, ttl too large) |
 | `503` | Could not generate unique auto alias after retries |
 
 ---
@@ -576,6 +582,8 @@ DATABASE_CA_CERT=${db-dev.CA_CERT}
 | `AUTO_ALIAS_STRATEGY` | `random` (default) or `base62` |
 | `AUTO_ALIAS_LENGTH` | Random alias length, or Base62 minimum length (default 8) |
 | `AUTO_ALIAS_MAX_RETRIES` | Max collision retries for random strategy (default 5) |
+| `DEFAULT_LINK_TTL_SECONDS` | Optional default link TTL when request omits `ttl_seconds` |
+| `MAX_LINK_TTL_SECONDS` | Maximum allowed `ttl_seconds` per link (default 31536000) |
 | `REDIRECT_CACHE_TTL_SECONDS` | In-memory cache TTL (default 3600) |
 | `DB_INIT_MAX_RETRIES` | Startup DB connection retries (default 10) |
 | `DB_INIT_RETRY_DELAY_SECONDS` | Delay between startup retries (default 2.0) |

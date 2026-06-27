@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     auto_alias_length: int = 8
     auto_alias_max_retries: int = 5
 
+    default_link_ttl_seconds: int | None = None
+    max_link_ttl_seconds: int = 31_536_000
+
     db_init_max_retries: int = 10
     db_init_retry_delay_seconds: float = 2.0
 

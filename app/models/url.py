@@ -20,3 +20,8 @@ class UrlMapping(Base):
         nullable=False,
         server_default=func.now(),
     )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )

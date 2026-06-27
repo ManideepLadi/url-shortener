@@ -10,6 +10,7 @@ from app.strategies.random_alias_strategy import RandomAliasStrategy
 from app.utils.exceptions import (
     AliasAlreadyExistsError,
     AliasGenerationError,
+    UrlExpiredError,
     UrlMappingNotFoundError,
 )
 
@@ -62,8 +63,13 @@ class TestCreateShortUrl:
         repository.create.assert_awaited_once_with(
             alias="my-link",
             long_url="https://example.com/path",
+            expires_at=None,
         )
-        cache.set_long_url.assert_awaited_once()
+        cache.set_long_url.assert_awaited_once_with(
+            "my-link",
+            "https://example.com",
+            link_expires_at=None,
+        )
 
     @pytest.mark.asyncio
     async def test_create_auto_alias_retries_on_collision(self, service, repository, cache):
@@ -111,7 +117,11 @@ class TestResolveRedirect:
 
         assert url == "https://example.com"
         record.assert_called_once_with(cache_hit=False)
-        cache.set_long_url.assert_awaited_once()
+        cache.set_long_url.assert_awaited_once_with(
+            "abc123",
+            "https://example.com",
+            link_expires_at=None,
+        )
         cache.increment_hits.assert_awaited_once_with("abc123")
 
     @pytest.mark.asyncio
@@ -120,6 +130,18 @@ class TestResolveRedirect:
 
         with pytest.raises(UrlMappingNotFoundError):
             await service.resolve_redirect("missing")
+
+
+    @pytest.mark.asyncio
+    async def test_raises_when_expired(self, service, repository, cache):
+        mapping = _mapping()
+        mapping.expires_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        repository.get_by_alias.return_value = mapping
+
+        with pytest.raises(UrlExpiredError):
+            await service.resolve_redirect("abc123")
+
+        cache.invalidate.assert_awaited_once_with("abc123")
 
 
 class TestGetMetadata:

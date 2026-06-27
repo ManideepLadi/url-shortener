@@ -23,6 +23,14 @@ class UrlMappingNotFoundError(AppError):
         )
 
 
+class UrlExpiredError(AppError):
+    def __init__(self, alias: str) -> None:
+        super().__init__(
+            message=f"Short URL '{alias}' has expired",
+            status_code=410,
+        )
+
+
 class AliasGenerationError(AppError):
     def __init__(self) -> None:
         super().__init__(

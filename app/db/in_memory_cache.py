@@ -1,11 +1,15 @@
 import asyncio
 import logging
 import time
+from datetime import datetime
 
 from app.config import settings
 from app.metrics.prometheus import refresh_cache_gauges
+from app.utils.expiry import is_link_expired
 
 logger = logging.getLogger(__name__)
+
+RedirectEntry = tuple[str, float, datetime | None]
 
 
 class InMemoryUrlCache:
@@ -17,7 +21,7 @@ class InMemoryUrlCache:
     """
 
     def __init__(self) -> None:
-        self._redirects: dict[str, tuple[str, float]] = {}
+        self._redirects: dict[str, RedirectEntry] = {}
         self._hits: dict[str, int] = {}
         self._lock = asyncio.Lock()
         self._ttl = settings.redirect_cache_ttl_seconds
@@ -34,18 +38,25 @@ class InMemoryUrlCache:
             entry = self._redirects.get(alias)
             if entry is None:
                 return None
-            long_url, expires_at = entry
-            if time.monotonic() > expires_at:
+            long_url, cache_expires_at, link_expires_at = entry
+            if time.monotonic() > cache_expires_at or is_link_expired(link_expires_at):
                 del self._redirects[alias]
                 self._update_metrics()
                 return None
             return long_url
 
-    async def set_long_url(self, alias: str, long_url: str) -> None:
+    async def set_long_url(
+        self,
+        alias: str,
+        long_url: str,
+        *,
+        link_expires_at: datetime | None = None,
+    ) -> None:
         async with self._lock:
             self._redirects[alias] = (
                 long_url,
                 time.monotonic() + self._ttl,
+                link_expires_at,
             )
             self._update_metrics()
 

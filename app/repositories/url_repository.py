@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -14,8 +15,14 @@ class UrlRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, alias: str, long_url: str) -> UrlMapping:
-        mapping = UrlMapping(alias=alias, long_url=long_url)
+    async def create(
+        self,
+        alias: str,
+        long_url: str,
+        *,
+        expires_at: datetime | None = None,
+    ) -> UrlMapping:
+        mapping = UrlMapping(alias=alias, long_url=long_url, expires_at=expires_at)
         self._session.add(mapping)
         try:
             await self._session.commit()
@@ -27,9 +34,15 @@ class UrlRepository:
         await self._session.refresh(mapping)
         return mapping
 
-    async def create_and_flush(self, alias: str, long_url: str) -> UrlMapping:
+    async def create_and_flush(
+        self,
+        alias: str,
+        long_url: str,
+        *,
+        expires_at: datetime | None = None,
+    ) -> UrlMapping:
         """Insert a row and flush so the autoincrement ID is available."""
-        mapping = UrlMapping(alias=alias, long_url=long_url)
+        mapping = UrlMapping(alias=alias, long_url=long_url, expires_at=expires_at)
         self._session.add(mapping)
         await self._session.flush()
         await self._session.refresh(mapping)

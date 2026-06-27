@@ -3,6 +3,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import text
 
 from app.config import masked_database_url, normalize_database_url, settings
 from app.db.ssl_context import create_database_ssl_context
@@ -70,6 +71,12 @@ async def init_db() -> None:
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await conn.execute(
+                    text(
+                        "ALTER TABLE url_mappings "
+                        "ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"
+                    )
+                )
             logger.info("Database schema initialized")
             return
         except Exception as exc:
