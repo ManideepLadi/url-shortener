@@ -63,7 +63,7 @@ See [DEPLOY.md](./DEPLOY.md) for App Platform deployment.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 ./scripts/check-db.sh   # verify PostgreSQL connectivity
 ./scripts/run-dev.sh    # start on http://localhost:8000
