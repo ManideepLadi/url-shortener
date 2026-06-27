@@ -1,0 +1,112 @@
+# -------------------------
+# Python
+# -------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# -------------------------
+# Testing & coverage
+# -------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# -------------------------
+# Type checkers & linters
+# -------------------------
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.dmypy.json
+dmypy.json
+
+# -------------------------
+# Environment & secrets
+# -------------------------
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# -------------------------
+# Logs & runtime
+# -------------------------
+*.log
+logs/
+tmp/
+temp/
+*.pid
+*.seed
+
+# -------------------------
+# IDE & editors
+# -------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+*.sublime-project
+*.sublime-workspace
+
+# -------------------------
+# OS files
+# -------------------------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# -------------------------
+# Docker & local data
+# -------------------------
+docker-compose.override.yml
+docker-compose.local.yml
+*.local.yaml
+*.local.yml
+
+# -------------------------
+# Database & cache (local)
+# -------------------------
+*.db
+*.sqlite3
+postgres_data/
+redis_data/
+
+# -------------------------
+# Deployment artifacts
+# -------------------------
+*.tar
+*.zip
+
+# -------------------------
+# Cursor / local tooling
+# -------------------------
+.cursor/
